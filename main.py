@@ -10,6 +10,11 @@ class CellFormation:
         self.matrix = matrix
         self.rows_count = len(self.matrix)
         self.cols_count = len(self.matrix[0])
+        self.flat = matrix.flatten().astype(float)
+        self.n0 = len(list(filter(lambda x: x == 0, self.flat)))
+        self.n1 = len(self.flat) - self.n0
+        self.n0_in = self.n0
+        self.n1_in = self.n1
         self.cells = self.generate_cells()
         self.problem = self.construct_problem()
 
@@ -22,19 +27,19 @@ class CellFormation:
         problem.objective.set_sense(problem.objective.sense.maximize)
 
         # set cell variables
-        cell_count = len(self.matrix)
-        cell_variables_names = [f'x_{i}' for i in range(cell_count)]
+        cell_count = len(self.cells)
 
-        # cell_variables_objectives = [1.0] * cell_count
-        cell_variables_ub = [1.0] * cell_count
-        cell_variables_lb = [0.0] * cell_count
-        cell_variables_types = [problem.variables.type.continuous] * cell_count
-        problem.variables.add(
-            ub=cell_variables_ub,
-            lb=cell_variables_lb,
-            types=cell_variables_types,
-            names=cell_variables_names
-        )
+        # a = n1 + n_0_in_l
+        # b = n_1_l
+        for index, cell in enumerate(self.cells):
+            n1_k = cell[2][0]
+            n0_k = cell[2][1]
+            obj_expression = (self.n1 + self.n0) * n1_k - self.n1 * n0_k
+            obj_expression = float(obj_expression)
+            # n0_in
+            problem.variables.add(obj=[obj_expression],
+                                  names=[f'x_{index}'],
+                                  types=[problem.variables.type.continuous])
 
         # set row constraints
         row_variables_names = list()
@@ -75,7 +80,7 @@ class CellFormation:
         # make helper variable for r_i_k * x_k <= 1
         # z_i_k = r_i_k * x_k
         # z_i_k <= x_k
-        # z_i_k >= r_i_k
+        # z_i_k <= r_i_k
         # z_i_k >= x_k + r_i_k - 1
         for k in range(cell_count):
             x_var = f'x_{k}'
@@ -93,14 +98,14 @@ class CellFormation:
                                                senses=['L'],
                                                rhs=[0.0],
                                                names=[f'{z_var} less than {x_var}'])
-                # r_i_k <= z_i_k
-                problem.linear_constraints.add(lin_expr=[[[r_var, z_var], [1.0, -1.0]]],
+                # z_i_k <= r_i_k
+                problem.linear_constraints.add(lin_expr=[[[z_var, r_var], [1.0, -1.0]]],
                                                senses=['L'],
                                                rhs=[0.0],
-                                               names=[f'{r_var} less than {z_var}'])
+                                               names=[f'{z_var} less than {r_var}'])
 
                 # x_k + r_i_k - z_i_k <= 1
-                problem.linear_constraints.add(lin_expr=[[[r_var, z_var], [1.0, -1.0]]],
+                problem.linear_constraints.add(lin_expr=[[[x_var, r_var, z_var], [1.0, 1.0, -1.0]]],
                                                senses=['L'],
                                                rhs=[1.0],
                                                names=[f'{x_var} plus {r_var} minus {z_var} less than 1'])
@@ -114,13 +119,13 @@ class CellFormation:
                                            rhs=[1.0],
                                            names=[f'sum of z_{i} less than one'])
 
-        # make helper variable for c_j_k * y_k <= 1
-        # t_j_k = c_j_k * y_k
-        # t_j_k <= y_k
-        # t_j_k >= c_j_k
-        # t_j_k >= y_k + c_j_k - 1
+        # make helper variable for c_j_k * x_k <= 1
+        # t_j_k = c_j_k * x_k
+        # t_j_k <= x_k
+        # t_j_k <= c_j_k
+        # t_j_k >= x_k + c_j_k - 1
         for k in range(cell_count):
-            y_var = f'y_{k}'
+            x_var = f'x_{k}'
             for j in range(self.cols_count):
                 t_var = f't_{j}_{k}'
                 c_var = f'c_{j}_{k}'
@@ -130,22 +135,22 @@ class CellFormation:
                     types=[problem.variables.type.continuous],
                     names=[t_var]
                 )
-                # t_j_k <= y_k
-                problem.linear_constraints.add(lin_expr=[[[t_var, y_var], [1.0, -1.0]]],
+                # t_j_k <= x_k
+                problem.linear_constraints.add(lin_expr=[[[t_var, x_var], [1.0, -1.0]]],
                                                senses=['L'],
                                                rhs=[0.0],
-                                               names=[f'{t_var} less than {y_var}'])
-                # c_i_k <= t_i_k
-                problem.linear_constraints.add(lin_expr=[[[c_var, t_var], [1.0, -1.0]]],
+                                               names=[f'{t_var} less than {x_var}'])
+                # t_j_k <= c_j_k
+                problem.linear_constraints.add(lin_expr=[[[t_var, c_var], [1.0, -1.0]]],
                                                senses=['L'],
                                                rhs=[0.0],
-                                               names=[f'{c_var} less than {t_var}'])
+                                               names=[f'{t_var} less than {c_var}'])
 
-                # y_k + c_i_k - t_i_k <= 1
-                problem.linear_constraints.add(lin_expr=[[[c_var, t_var], [1.0, -1.0]]],
+                # x_k + c_j_k - t_i_k <= 1
+                problem.linear_constraints.add(lin_expr=[[[x_var, c_var, t_var], [1.0, 1.0, -1.0]]],
                                                senses=['L'],
                                                rhs=[1.0],
-                                               names=[f'{y_var} plus {c_var} minus {t_var} less than 1'])
+                                               names=[f'{x_var} plus {c_var} minus {t_var} less than 1'])
 
         # sum of t_i by k less than 1
         for j in range(self.cols_count):
@@ -162,11 +167,15 @@ class CellFormation:
     def generate_cells(self):
         cells = list()
         cells.extend(self._generate_cells(self.matrix))
-        cells.extend(self._generate_cells(np.transpose(self.matrix)))
+        cells.extend(self.swap(self._generate_cells(np.transpose(self.matrix))))
         return cells
 
-    @staticmethod
-    def _generate_cells(matrix):
+    def swap(self, cells):
+        for cell in cells:
+            cell[0], cell[1] = cell[1], cell[0]
+        return cells
+
+    def _generate_cells(self, matrix):
         cells = []
         r, c = matrix.shape
         r_sum = [0] * r
@@ -188,7 +197,8 @@ class CellFormation:
             included_rows = list()
             included_rows.append(best_row)
             included_columns = []
-            cell = [included_rows, included_columns]
+            ones_zeros = [0, 0]
+            cell = [included_rows, included_columns, ones_zeros]
             # pick the columns which have 1
             cols_with_ones = []
             for index, col in enumerate(matrix[best_row]):
@@ -196,6 +206,7 @@ class CellFormation:
                     cols_with_ones.append(index)
             # count the number of selected ones
             ones_in_row = len(cols_with_ones)
+            ones_zeros[0] += ones_in_row
             ones_threshold = int(ones_in_row // 2)
             included_columns.extend(cols_with_ones)
             # now try adding more rows to the cell
@@ -205,10 +216,13 @@ class CellFormation:
                 b = [matrix[row][c] for c in cols_with_ones]
                 cos_sim = dot(a, b) / (norm(a) * norm(b))
                 if cos_sim >= 0.85:
+                    ones_zeros[0] += sum(b)
+                    ones_zeros[1] += len(b) - sum(b)
                     included_rows.append(row)
                     r_sum[row] = -sys.maxsize
                     rows_count.remove(row)
             cells.append(cell)
+        # cells.append([list(range(r)), list(range(c)), [self.n1, self.n0]])
         return cells
 
 
@@ -216,3 +230,4 @@ if __name__ == '__main__':
     from utils import read
     matrix = read('examples/1.txt')
     cf = CellFormation(matrix)
+    cf.problem.solution.get_values()
