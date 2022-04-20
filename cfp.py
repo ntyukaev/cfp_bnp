@@ -12,10 +12,52 @@ class CFP:
         self.n0 = self.matrix.n0
         self.n1_in = self.matrix.n1
         self.n0_in = self.matrix.n0
-        self.var_mapping = dict()
-        self.problem = self.construct_problem()
+        self.var_mapping = None
+        self.master_problem = self.construct_master_problem()
+        self.master_problem.solve()
+        self.slave_problem = self.construct_slave_problem()
 
-    def construct_problem(self):
+    def construct_slave_problem(self):
+        problem = Cplex()
+        problem.set_log_stream(None)
+        problem.set_results_stream(None)
+        problem.set_warning_stream(None)
+        problem.set_error_stream(None)
+
+        problem.objective.set_sense(problem.objective.sense.minimize)
+
+        dual_values = self.master_problem.solution.get_dual_values()
+        var_names = [f'yr_{r}' for r in range(self.matrix.rows_count)]
+        var_names.extend([f'yc_{c}' for c in range(self.matrix.columns_count)])
+        # for cell in self.matrix.cells:
+        #     rows_indices = cell.get_rows_indices()
+        problem.variables.add(
+            obj=dual_values,
+            ub=[1.0] * len(dual_values),
+            lb=[0.0] * len(dual_values),
+            names=var_names
+        )
+
+        for cell in self.matrix.cells:
+            rows_vars = [f'yr_{r}' for r in cell.get_rows_indices()]
+            problem.linear_constraints.add(
+                lin_expr=[[rows_vars, [1.0] * len(rows_vars)]],
+                senses=['L'],
+                rhs=[1.0],
+                names=[f'cell_{cell.index}_rows']
+            )
+            cols_vars = [f'yc_{c}' for c in cell.get_columns_indices()]
+            problem.linear_constraints.add(
+                lin_expr=[[cols_vars, [1.0] * len(cols_vars)]],
+                senses=['L'],
+                rhs=[1.0],
+                names=[f'cell_{cell.index}_cols']
+            )
+
+        return problem
+
+    def construct_master_problem(self):
+        self.var_mapping = dict()
         problem = Cplex()
         problem.set_log_stream(None)
         problem.set_results_stream(None)
@@ -34,7 +76,8 @@ class CFP:
             self.var_mapping[var_name] = cell
             problem.variables.add(obj=[expression],
                                   names=[var_name],
-                                  types=[problem.variables.type.continuous])
+                                  # types=[problem.variables.type.continuous]
+                                  )
 
         # n1_in * n1 constant
         problem.objective.set_offset(-self.n1_in * self.n1)
@@ -66,13 +109,13 @@ class CFP:
         self.dkb()
 
     def dkb(self):
-        self.problem.solve()
-        objective_value = self.problem.solution.get_objective_value()
+        self.master_problem.solve()
+        objective_value = self.master_problem.solution.get_objective_value()
         if objective_value > 0:
             n1_inl = 0
             n0_inl = 0
-            solution_values = self.problem.solution.get_values()
-            solution_names = self.problem.variables.get_names()
+            solution_values = self.master_problem.solution.get_values()
+            solution_names = self.master_problem.variables.get_names()
             solution_dict = dict(zip(solution_names, solution_values))
             for var_name, var_val in solution_dict.items():
                 if var_val:
@@ -82,7 +125,7 @@ class CFP:
                     n0_inl += n0
             self.n1_in = n1_inl
             self.n0_in = n0_inl
-            self.problem = self.construct_problem()
+            self.master_problem = self.construct_master_problem()
             self.dkb()
 
 
