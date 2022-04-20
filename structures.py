@@ -1,116 +1,111 @@
-import numpy as np
-from numpy import dot
-from numpy.linalg import norm
 import random
+from itertools import count
+import numpy as np
+import copy
 
 
-class Status:
-    UNVISITED = 0
-    VISITED = 1
-
-
-class Types:
-    ROW = 0
-    COLUMN = 1
-
-
-class CellList:
+class Matrix:
     def __init__(self, matrix):
         self.matrix = matrix
-        self.flat = matrix.flatten().astype(float)
+        self.rows_count = len(matrix)
+        self.columns_count = len(matrix[0])
+        self.rows = set([Row(index, row) for index, row in enumerate(self.matrix)])
+        self.columns = set([Column(index, col) for index, col in enumerate(np.transpose(self.matrix))])
+        self.flat = self.matrix.flatten().astype(float)
         self.n0 = len(list(filter(lambda x: x == 0, self.flat)))
         self.n1 = len(self.flat) - self.n0
-        self.rows_count = len(matrix)
-        self.column_count = len(matrix[0])
+        self.efficacy = 0
         self.cells = set()
-        self.efficacy = self.get_efficacy()
 
-    def generate_cells(self):
-        self.get_initial_cells()
-        self.local_search()
-
-    def get_efficacy(self):
+    def get_efficacy(self, cells):
         n1_in = 0
         n0_in = 0
-        for cell in self.cells:
+        for cell in cells:
             n1_in_cell, n0_in_cell = cell.info()
             n1_in += n1_in_cell
             n0_in += n0_in_cell
         return n1_in / (self.n1 + n0_in)
 
-    def local_search(self):
-        # pick a random element and try to put it somewhere else
-        # calculate efficacy if it improves efficacy then good
-        # do it until we reach the max efficacy
+    def get_pool(self):
+        pool = set()
+        pool.update([row for row in self.rows])
+        pool.update([col for col in self.columns])
+        return pool
 
-        # now try adding it to the cells
+    def populate_cells(self):
+        # the max amount of cells is equal to the min of rows & cols
+        cells = [Cell() for _ in range(min([self.rows_count, self.columns_count]))]
+        # distribute rows and columns between cells
+        for row in self.rows:
+            cell = random.choice(cells)
+            cell.add(row)
+
+        for col in self.columns:
+            cell = random.choice(cells)
+            cell.add(col)
+        # calculate efficacy
+        efficacy = self.get_efficacy(cells)
+
+        # try improving efficacy by moving rows and columns between cells
         pool = self.get_pool()
         while pool:
             element = random.sample(pool, 1)[-1]
-            for cell in self.cells:
+            # remove element from parent
+            parent = element.parent
+            random.shuffle(cells)
+            for cell in cells:
                 cell.add(element)
                 # calculate efficacy
-                current_efficacy = self.get_efficacy()
+                current_efficacy = self.get_efficacy(cells)
                 # if it's better than previous than redo
-                if current_efficacy > self.efficacy:
-                    self.efficacy = current_efficacy
-                    # change element's parent
-                    element.parent = cell
+                if current_efficacy > efficacy:
+                    efficacy = current_efficacy
                     pool = self.get_pool()
-                else:
-                    cell.remove(element)
-            element.parent.add(element)
-            pool.remove(element)
+                    break
+            else:
+                parent.add(element)
+                pool.remove(element)
 
-    def get_pool(self):
-        pool = set()
-        for cell in self.cells:
-            pool.update([row for row in cell.rows])
-            pool.update([col for col in cell.columns])
-        return pool
-
-    def get_initial_cells(self):
-        # get an initial set of cells
-        rows = set()
-        for index, row in enumerate(self.matrix):
-            rows.add(Row(index, row))
-        columns = set()
-        for index, column in enumerate(np.transpose(self.matrix)):
-            columns.add(Column(index, column))
-        while rows:
-            # create the first cell
-            cell = Cell()
-            self.cells.add(cell)
-            # pick the best row
-            best_row = max(rows)
-            best_row_ones_indices = [index for index, val in enumerate(best_row) if val]
-            cell.add(best_row)
-            rows.remove(best_row)
-            for column in columns.copy():
-                if column.index in best_row_ones_indices:
-                    cell.add(column)
-                    columns.remove(column)
-            # try adding more rows
-            for row in rows.copy():
-                a = [best_row[index] for index in best_row_ones_indices]
-                b = [row[index] for index in best_row_ones_indices]
-                cos_sim = dot(a, b) / (norm(a) * norm(b))
-                if cos_sim >= 0.85:
-                    rows.remove(row)
-                    cell.add(row)
-            self.cells.add(cell)
-        # calculate efficacy
-        self.efficacy = self.get_efficacy()
+        self.efficacy = efficacy
+        cells = [cell for cell in cells if cell.rows or cell.columns]
+        # create a cell containing all rows and columns
+        self.cells.update(cells)
 
 
 class Cell:
+    _ids = count(0)
+
     def __init__(self):
         self.rows = set()
         self.columns = set()
-        self.status = Status.UNVISITED
+        self.index = next(self._ids)
+
+    def __repr__(self):
+        return f'Cell({self.get_rows_indices()}, {self.get_columns_indices()})'
+
+    def get_rows_indices(self):
+        return [row.index for row in self.rows]
+
+    def get_columns_indices(self):
+        return [col.index for col in self.columns]
+
+    def add(self, obj):
+        if obj.parent:
+            obj.parent.remove(obj)
+        obj.parent = self
+        if type(obj) == Row:
+            self.rows.add(obj)
+        else:
+            self.columns.add(obj)
+
+    def remove(self, obj):
+        if type(obj) == Row:
+            self.rows.remove(obj)
+        else:
+            self.columns.remove(obj)
 
     def info(self):
-        col_indices = [col.index for col in self.columns]
+        col_indices = self.get_columns_indices()
         n0 = 0
         n1 = 0
         for row in self.rows:
@@ -122,57 +117,37 @@ class Cell:
                     n0 += 1
         return n1, n0
 
-    def zeros(self):
-        return sum([row.zeros for row in self.rows]) + sum([col.zeros for col in self.columns])
-
-    def add(self, obj):
-        if not obj.parent:
-            obj.parent = self
-        if obj.__class__ == Row:
-            if obj.parent and obj in obj.parent.rows:
-                obj.parent.rows.remove(obj)
-            self.rows.add(obj)
-        else:
-            if obj.parent and obj in obj.parent.columns:
-                obj.parent.columns.remove(obj)
-            self.columns.add(obj)
-
-    def remove(self, obj):
-        if obj.__class__ == Row:
-            self.rows.remove(obj)
-        else:
-            self.columns.remove(obj)
-
 
 class Row:
-    t = Types.ROW
-
     def __init__(self, index, arr):
         self.index = index
-        self.arr = arr
-        self.ones = sum(self.arr)
-        self.zeros = len(self.arr) - self.ones
-        self.status = Status.UNVISITED
+        self.arr = tuple(arr)
         self.parent = None
 
-    def __gt__(self, other):
-        return self.ones > other.ones
+    def __eq__(self, other):
+        return self.arr == other.arr and self.index == other.index and type(self) == type(other)
+
+    def __hash__(self):
+        return hash(tuple((self.arr, self.index, self.__class__)))
 
     def __repr__(self):
-        return f'Row({self.arr})'
+        return f'Row(elements={self.arr}, index={self.index})'
 
-    def __str__(self):
-        return self.__repr__()
-
-    def __iter__(self):
-        return self.arr.__iter__()
-
-    def __getitem__(self, index):
-        return self.arr[index]
+    def __getitem__(self, item):
+        return self.arr[item]
 
 
 class Column(Row):
-    t = Types.COLUMN
-
     def __repr__(self):
-        return f'Column({self.arr})'
+        return f'Column(elements={self.arr}, index={self.index})'
+
+
+def main():
+    from utils import read
+    example = read('examples/1.txt')
+    matrix = Matrix(example)
+    matrix.populate_cells()
+
+
+if __name__ == '__main__':
+    main()
