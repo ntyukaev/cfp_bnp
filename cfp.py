@@ -7,7 +7,7 @@ class CFP:
     def __init__(self, path):
         self.example = read(path)
         self.matrix = Matrix(self.example)
-        self.matrix.populate_cells()
+        self.cells, self.efficacy = self.matrix.populate_cells(self.matrix.efficacy_fn)
         self.n1 = self.matrix.n1
         self.n0 = self.matrix.n0
         self.n1_in = self.matrix.n1
@@ -29,7 +29,7 @@ class CFP:
         dual_values = self.master_problem.solution.get_dual_values()
         var_names = [f'yr_{r}' for r in range(self.matrix.rows_count)]
         var_names.extend([f'yc_{c}' for c in range(self.matrix.columns_count)])
-        # for cell in self.matrix.cells:
+        # for cell in self.cells:
         #     rows_indices = cell.get_rows_indices()
         problem.variables.add(
             obj=dual_values,
@@ -38,7 +38,7 @@ class CFP:
             names=var_names
         )
 
-        for cell in self.matrix.cells:
+        for cell in self.cells:
             rows_vars = [f'yr_{r}' for r in cell.get_rows_indices()]
             problem.linear_constraints.add(
                 lin_expr=[[rows_vars, [1.0] * len(rows_vars)]],
@@ -68,7 +68,7 @@ class CFP:
         # define x variables
         # a = n1 + n_0_in_l
         # b = n_1_l
-        for cell in self.matrix.cells:
+        for cell in self.cells:
             n1_k, n0_k = cell.info()
             expression = (self.n1 + self.n0_in) * n1_k - self.n1_in * n0_k
             expression = float(expression)
@@ -85,7 +85,7 @@ class CFP:
         # define row constraints
         for i in range(self.matrix.rows_count):
             vars = []
-            for cell in self.matrix.cells:
+            for cell in self.cells:
                 if i in cell.get_rows_indices():
                     vars.append(f'x_{cell.index}')
             problem.linear_constraints.add(lin_expr=[[vars, [1.0] * len(vars)]],
@@ -95,7 +95,7 @@ class CFP:
         # define column constraints
         for i in range(self.matrix.columns_count):
             vars = []
-            for cell in self.matrix.cells:
+            for cell in self.cells:
                 if i in cell.get_columns_indices():
                     vars.append(f'x_{cell.index}')
             problem.linear_constraints.add(lin_expr=[[vars, [1.0] * len(vars)]],
@@ -107,6 +107,28 @@ class CFP:
 
     def solve(self):
         self.dkb()
+        violation_cells = self.get_violation_cells()
+        while violation_cells:
+            self.cells.extend(violation_cells)
+            self.master_problem = self.construct_master_problem()
+            self.master_problem.solve()
+            violation_cells = self.get_violation_cells()
+
+    def get_violation_cells(self):
+        # эвристика для поиска самой нарушенной ячейки
+        dual_solution = self.master_problem.solution.get_dual_values()
+        rows_weights = dual_solution[:self.matrix.rows_count]
+        columns_weights = dual_solution[self.matrix.rows_count:]
+        cells, efficacy = self.matrix.populate_cells(self.matrix.get_violation_metric(self.n1_in, self.n0_in, rows_weights, columns_weights))
+        if efficacy > 1.0:
+            return cells
+        return list()
+
+    def get_dual_solution_mapping(self):
+        dual_solution = self.master_problem.solution.get_dual_values()
+        solution_vars = [f'yr_{r}' for r in range(self.matrix.rows_count)]
+        solution_vars.extend([f'yc_{c}' for c in range(self.matrix.columns_count)])
+        return dict(zip(solution_vars, dual_solution))
 
     def dkb(self):
         self.master_problem.solve()

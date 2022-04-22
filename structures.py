@@ -1,75 +1,111 @@
 import random
 from itertools import count
 import numpy as np
-import copy
+from copy import copy
 
 
-class Matrix:
-    def __init__(self, matrix):
-        self.matrix = matrix
-        self.rows_count = len(matrix)
-        self.columns_count = len(matrix[0])
-        self.rows = set([Row(index, row) for index, row in enumerate(self.matrix)])
-        self.columns = set([Column(index, col) for index, col in enumerate(np.transpose(self.matrix))])
-        self.flat = self.matrix.flatten().astype(float)
-        self.n0 = len(list(filter(lambda x: x == 0, self.flat)))
-        self.n1 = len(self.flat) - self.n0
-        self.efficacy = 0
-        self.cells = set()
-
-    def get_efficacy(self, cells):
+def get_efficacy(n1):
+    def _inner(cells):
         n1_in = 0
         n0_in = 0
         for cell in cells:
             n1_in_cell, n0_in_cell = cell.info()
             n1_in += n1_in_cell
             n0_in += n0_in_cell
-        return n1_in / (self.n1 + n0_in)
+        return n1_in / (n1 + n0_in)
+    return _inner
 
-    def get_pool(self):
+
+def get_violation_metric(n1_in, n0_in, rows_weights, cols_weights):
+    def _inner(cells):
+        cell_weights = list()
+        for cell in cells:
+            cell_weight = 0
+            for row in copy(cell.rows):
+                row_weight = rows_weights[row.index]
+                if row_weight:
+                    cell_weight += rows_weights[row.index]
+                else:
+                    cell.remove(row)
+            for col in copy(cell.columns):
+                col_weight = cols_weights[col.index]
+                if col_weight:
+                    cell_weight += cols_weights[col.index]
+                else:
+                    cell.remove(col)
+            cell_weights.append(cell_weight)
+        return max(cell_weights)
+    return _inner
+
+
+class Matrix:
+    def __init__(self, matrix):
+        self.matrix = matrix
+        self.transposed_matrix = np.transpose(self.matrix)
+        self.rows_count = len(matrix)
+        self.columns_count = len(matrix[0])
+        self.flat = self.matrix.flatten().astype(float)
+        self.n0 = len(list(filter(lambda x: x == 0, self.flat)))
+        self.n1 = len(self.flat) - self.n0
+        self.efficacy_fn = get_efficacy(self.n1)
+        self.efficacy = 0
+        self.get_violation_metric = get_violation_metric
+        self.cells = set()
+
+    def create_row(self, index):
+        return Row(index, self.matrix[index])
+
+    def create_column(self, index):
+        return Column(index, self.transposed_matrix[index])
+
+    def get_pool(self, rows, columns):
         pool = set()
-        pool.update([row for row in self.rows])
-        pool.update([col for col in self.columns])
+        pool.update([row for row in rows if row.parent])
+        pool.update([col for col in columns if col.parent])
         return pool
 
-    def populate_cells(self):
+    def populate_cells(self, efficacy_fn):
+        # generate rows and columns
+        rows = set([Row(index, row) for index, row in enumerate(self.matrix)])
+        columns = set([Column(index, col) for index, col in enumerate(np.transpose(self.matrix))])
         # the max amount of cells is equal to the min of rows & cols
         cells = [Cell() for _ in range(min([self.rows_count, self.columns_count]))]
         # distribute rows and columns between cells
-        for row in self.rows:
+        for row in rows:
             cell = random.choice(cells)
             cell.add(row)
 
-        for col in self.columns:
+        for col in columns:
             cell = random.choice(cells)
             cell.add(col)
         # calculate efficacy
-        efficacy = self.get_efficacy(cells)
+        efficacy = efficacy_fn(cells)
 
         # try improving efficacy by moving rows and columns between cells
-        pool = self.get_pool()
+        pool = self.get_pool(rows, columns)
         while pool:
             element = random.sample(pool, 1)[-1]
             # remove element from parent
             parent = element.parent
+            if not parent:
+                pool.remove(element)
+                continue
             random.shuffle(cells)
             for cell in cells:
                 cell.add(element)
                 # calculate efficacy
-                current_efficacy = self.get_efficacy(cells)
+                current_efficacy = efficacy_fn(cells)
                 # if it's better than previous than redo
                 if current_efficacy > efficacy:
                     efficacy = current_efficacy
-                    pool = self.get_pool()
+                    pool = self.get_pool(rows, columns)
                     break
             else:
                 parent.add(element)
                 pool.remove(element)
 
-        self.efficacy = efficacy
         cells = [cell for cell in cells if cell.rows or cell.columns]
-        # create a cell containing all rows and columns
-        self.cells.update(cells)
+        return cells, efficacy
 
 
 class Cell:
@@ -79,6 +115,7 @@ class Cell:
         self.rows = set()
         self.columns = set()
         self.index = next(self._ids)
+        self.priority = 0
 
     def __repr__(self):
         return f'Cell({self.get_rows_indices()}, {self.get_columns_indices()})'
@@ -99,6 +136,7 @@ class Cell:
             self.columns.add(obj)
 
     def remove(self, obj):
+        obj.parent = None
         if type(obj) == Row:
             self.rows.remove(obj)
         else:
