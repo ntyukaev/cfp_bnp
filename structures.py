@@ -121,6 +121,10 @@ class Cell:
     def __repr__(self):
         return f'Cell({self.get_rows_indices()}, {self.get_columns_indices()})'
 
+    def __eq__(self, other):
+        return sorted(self.get_rows_indices()) == sorted(other.get_rows_indices()) and \
+               sorted(self.get_columns_indices()) == sorted(other.get_columns_indices())
+
     def get_rows_indices(self):
         return [row.index for row in self.rows]
 

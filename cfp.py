@@ -17,6 +17,11 @@ class CFP:
         self.master_problem.solve()
         self.slave_problem = self.construct_slave_problem()
 
+    def get_var_names_for_slave_problem(self):
+        var_names = [f'yr_{r}' for r in range(self.matrix.rows_count)]
+        var_names.extend([f'yc_{c}' for c in range(self.matrix.columns_count)])
+        return var_names
+
     def construct_slave_problem(self):
         problem = Cplex()
         problem.set_log_stream(None)
@@ -27,8 +32,7 @@ class CFP:
         problem.objective.set_sense(problem.objective.sense.minimize)
 
         dual_values = self.master_problem.solution.get_dual_values()
-        var_names = [f'yr_{r}' for r in range(self.matrix.rows_count)]
-        var_names.extend([f'yc_{c}' for c in range(self.matrix.columns_count)])
+        var_names = self.get_var_names_for_slave_problem()
         # for cell in self.cells:
         #     rows_indices = cell.get_rows_indices()
         problem.variables.add(
@@ -76,7 +80,8 @@ class CFP:
             self.var_mapping[var_name] = cell
             problem.variables.add(obj=[expression],
                                   names=[var_name],
-                                  # types=[problem.variables.type.continuous]
+                                  ub=[1.0],
+                                  lb=[0.0]
                                   )
 
         # n1_in * n1 constant
@@ -106,26 +111,40 @@ class CFP:
         return problem
 
     def solve(self):
+        # find violation cell
         self.dkb()
-        violation_cell = self.get_violation_cell()
-        while violation_cell:
-            self.cells.append(violation_cell)
+        violation_cells = self.get_violation_cells()
+        while violation_cells and any([vc not in self.cells for vc in violation_cells]):
+            self.cells.extend(violation_cells)
             self.master_problem = self.construct_master_problem()
             self.master_problem.solve()
-            violation_cell = self.get_violation_cell()
+            violation_cells = self.get_violation_cells()
 
-    def get_violation_cell(self):
+        # update slave problem objective
+        self.update_slave_problem()
+        self.solve()
+
+    def get_violation_cells(self):
         # эвристика для поиска самой нарушенной ячейки
         dual_solution = self.master_problem.solution.get_dual_values()
         rows_weights = dual_solution[:self.matrix.rows_count]
         columns_weights = dual_solution[self.matrix.rows_count:]
         cells, efficacy = self.matrix.populate_cells(self.matrix.get_violation_metric(self.n1_in, self.n0_in, rows_weights, columns_weights))
         cells = sorted(cells, key=lambda c: c.priority)
-        if cells:
-            cell = cells[0]
-            if efficacy > 1.0 and cell.priority < 0:
-                return cell
-        return None
+        if efficacy > 1.0 and cells[0].priority < 0:
+            return cells
+        return list()
+
+    def update_slave_problem(self):
+        dual_values = self.master_problem.solution.get_dual_values()
+        variables = self.get_var_names_for_slave_problem()
+        objective = list(zip(variables,
+                             [v if abs(v) != 0.0 else 0.000001 for v in dual_values]))
+        self.slave_problem.objective.set_linear(objective)
+        self.slave_problem.solve()
+        slave_problem_objective = self.slave_problem.solution.get_objective_value()
+        if slave_problem_objective > 0:
+            raise NotImplementedError
 
     def get_dual_solution_mapping(self):
         dual_solution = self.master_problem.solution.get_dual_values()
