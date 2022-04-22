@@ -107,22 +107,25 @@ class CFP:
 
     def solve(self):
         self.dkb()
-        violation_cells = self.get_violation_cells()
-        while violation_cells:
-            self.cells.extend(violation_cells)
+        violation_cell = self.get_violation_cell()
+        while violation_cell:
+            self.cells.append(violation_cell)
             self.master_problem = self.construct_master_problem()
             self.master_problem.solve()
-            violation_cells = self.get_violation_cells()
+            violation_cell = self.get_violation_cell()
 
-    def get_violation_cells(self):
+    def get_violation_cell(self):
         # эвристика для поиска самой нарушенной ячейки
         dual_solution = self.master_problem.solution.get_dual_values()
         rows_weights = dual_solution[:self.matrix.rows_count]
         columns_weights = dual_solution[self.matrix.rows_count:]
         cells, efficacy = self.matrix.populate_cells(self.matrix.get_violation_metric(self.n1_in, self.n0_in, rows_weights, columns_weights))
-        if efficacy > 1.0:
-            return cells
-        return list()
+        cells = sorted(cells, key=lambda c: c.priority)
+        if cells:
+            cell = cells[0]
+            if efficacy > 1.0 and cell.priority < 0:
+                return cell
+        return None
 
     def get_dual_solution_mapping(self):
         dual_solution = self.master_problem.solution.get_dual_values()

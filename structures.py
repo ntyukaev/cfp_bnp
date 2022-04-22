@@ -20,21 +20,22 @@ def get_violation_metric(n1_in, n0_in, rows_weights, cols_weights):
     def _inner(cells):
         cell_weights = list()
         for cell in cells:
+            cell_n1, cell_n0 = cell.info()
             cell_weight = 0
             for row in copy(cell.rows):
                 row_weight = rows_weights[row.index]
-                if row_weight:
-                    cell_weight += rows_weights[row.index]
-                else:
-                    cell.remove(row)
+                cell_weight += row_weight
             for col in copy(cell.columns):
                 col_weight = cols_weights[col.index]
-                if col_weight:
-                    cell_weight += cols_weights[col.index]
-                else:
-                    cell.remove(col)
-            cell_weights.append(cell_weight)
-        return max(cell_weights)
+                cell_weight += col_weight
+            d_k = (n1_in * cell_n1 + n0_in * cell_n0)
+            cell_weight_result = cell_weight - d_k
+            cell.priority = cell_weight_result
+            cell_weights.append(cell_weight_result)
+        min_weight = min(cell_weights)
+        if min_weight < 0:
+            return abs(min_weight)
+        return 0
     return _inner
 
 
