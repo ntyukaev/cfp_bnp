@@ -7,7 +7,9 @@ class CFP:
     def __init__(self, path):
         self.example = read(path)
         self.matrix = Matrix(self.example)
-        self.cells, self.efficacy = self.matrix.populate_cells(self.matrix.efficacy_fn)
+        self.cells, self.efficacy = self.matrix.populate_cells(self.matrix.efficacy_fn,
+                                                               n_cells=min(self.matrix.rows_count, self.matrix.columns_count),
+                                                               )
         self.n1 = self.matrix.n1
         self.n0 = self.matrix.n0
         self.n1_in = self.matrix.n1
@@ -79,9 +81,7 @@ class CFP:
             var_name = f'x_{cell.index}'
             self.var_mapping[var_name] = cell
             problem.variables.add(obj=[expression],
-                                  names=[var_name],
-                                  ub=[1.0],
-                                  lb=[0.0]
+                                  names=[var_name]
                                   )
 
         # n1_in * n1 constant
@@ -113,27 +113,33 @@ class CFP:
     def solve(self):
         # find violation cell
         self.dkb()
-        violation_cells = self.get_violation_cells()
-        while violation_cells and any([vc not in self.cells for vc in violation_cells]):
-            self.cells.extend(violation_cells)
+        violation_cell = self.get_violation_cell()
+        for i in range(100):
+            if violation_cell and violation_cell not in self.cells:
+                break
+            violation_cell = self.get_violation_cell()
+        while violation_cell and violation_cell not in self.cells:
+            self.cells.append(violation_cell)
             self.master_problem = self.construct_master_problem()
             self.master_problem.solve()
-            violation_cells = self.get_violation_cells()
+            violation_cell = self.get_violation_cell()
 
         # update slave problem objective
         self.update_slave_problem()
         self.solve()
 
-    def get_violation_cells(self):
+    def get_violation_cell(self):
         # эвристика для поиска самой нарушенной ячейки
         dual_solution = self.master_problem.solution.get_dual_values()
         rows_weights = dual_solution[:self.matrix.rows_count]
         columns_weights = dual_solution[self.matrix.rows_count:]
-        cells, efficacy = self.matrix.populate_cells(self.matrix.get_violation_metric(self.n1_in, self.n0_in, rows_weights, columns_weights))
+        cells, efficacy = self.matrix.populate_cells(self.matrix.get_violation_metric(self.n1_in, self.n0_in, rows_weights, columns_weights), n_cells=2)
         cells = sorted(cells, key=lambda c: c.priority)
-        if efficacy > 1.0 and cells[0].priority < 0:
-            return cells
-        return list()
+        if cells:
+            cell = cells[0]
+            if efficacy > 1.0 and cell.priority < 0:
+                return cell
+        return None
 
     def update_slave_problem(self):
         dual_values = self.master_problem.solution.get_dual_values()

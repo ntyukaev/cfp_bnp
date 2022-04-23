@@ -65,12 +65,12 @@ class Matrix:
         pool.update([col for col in columns if col.parent])
         return pool
 
-    def populate_cells(self, efficacy_fn):
+    def populate_cells(self, efficacy_fn, n_cells=2):
         # generate rows and columns
         rows = set([Row(index, row) for index, row in enumerate(self.matrix)])
         columns = set([Column(index, col) for index, col in enumerate(np.transpose(self.matrix))])
         # the max amount of cells is equal to the min of rows & cols
-        cells = [Cell() for _ in range(min([self.rows_count, self.columns_count]))]
+        cells = [Cell() for _ in range(n_cells)]
         # distribute rows and columns between cells
         for row in rows:
             cell = random.choice(cells)
@@ -126,10 +126,10 @@ class Cell:
                sorted(self.get_columns_indices()) == sorted(other.get_columns_indices())
 
     def get_rows_indices(self):
-        return [row.index for row in self.rows]
+        return sorted([row.index for row in self.rows])
 
     def get_columns_indices(self):
-        return [col.index for col in self.columns]
+        return sorted([col.index for col in self.columns])
 
     def add(self, obj):
         if obj.parent:
