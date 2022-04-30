@@ -53,6 +53,9 @@ class Matrix:
         self.get_violation_metric = get_violation_metric
         self.cells = set()
 
+    def __getitem__(self, item):
+        return self.matrix[item]
+
     def create_row(self, index):
         return Row(index, self.matrix[index])
 
@@ -107,6 +110,50 @@ class Matrix:
 
         cells = [cell for cell in cells if cell.rows or cell.columns]
         return cells, efficacy
+
+    def populate_cells_for_violation(self, total_cells, efficacy_fn, n_cells=2):
+        # generate rows and columns
+        rows = set([Row(index, row) for index, row in enumerate(self.matrix)])
+        columns = set([Column(index, col) for index, col in enumerate(np.transpose(self.matrix))])
+        # the max amount of cells is equal to the min of rows & cols
+        cells = [Cell() for _ in range(2)]
+        # distribute rows and columns between cells
+        for row in rows:
+            cell = random.choice(cells)
+            cell.add(row)
+
+        for col in columns:
+            cell = random.choice(cells)
+            cell.add(col)
+        # calculate efficacy
+        efficacy = 0
+
+        # try improving efficacy by moving rows and columns between cells
+        pool = self.get_pool(rows, columns)
+        while pool:
+            element = random.sample(pool, 1)[-1]
+            # remove element from parent
+            parent = element.parent
+            if not parent:
+                pool.remove(element)
+                continue
+            random.shuffle(cells)
+            for cell in cells:
+                cell.add(element)
+                # calculate efficacy
+                current_efficacy = efficacy_fn(cells)
+                # if it's better than previous than redo
+                if current_efficacy > efficacy:
+                    efficacy = current_efficacy
+                    if cell not in total_cells:
+                        return cell, efficacy
+                    pool = self.get_pool(rows, columns)
+                    break
+            else:
+                parent.add(element)
+                pool.remove(element)
+        cells = sorted(cells, key=lambda x: x.priority, reverse=True)
+        return cells[0], efficacy
 
 
 class Cell:

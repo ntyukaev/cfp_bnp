@@ -1,7 +1,9 @@
+import random
+
 from cplex import Cplex
 from structures import Matrix
 from utils import read
-
+from more_itertools import powerset
 
 class CFP:
     def __init__(self, path):
@@ -10,6 +12,7 @@ class CFP:
         self.cells, self.efficacy = self.matrix.populate_cells(self.matrix.efficacy_fn,
                                                                n_cells=min(self.matrix.rows_count, self.matrix.columns_count),
                                                                )
+        self.current_branch = 0
         self.n1 = self.matrix.n1
         self.n0 = self.matrix.n0
         self.n1_in = self.matrix.n1
@@ -17,7 +20,6 @@ class CFP:
         self.var_mapping = None
         self.master_problem = self.construct_master_problem()
         self.master_problem.solve()
-        self.slave_problem = self.construct_slave_problem()
 
     def get_var_names_for_slave_problem(self):
         var_names = [f'yr_{r}' for r in range(self.matrix.rows_count)]
@@ -33,32 +35,72 @@ class CFP:
 
         problem.objective.set_sense(problem.objective.sense.minimize)
 
-        dual_values = self.master_problem.solution.get_dual_values()
-        var_names = self.get_var_names_for_slave_problem()
-        # for cell in self.cells:
-        #     rows_indices = cell.get_rows_indices()
-        problem.variables.add(
-            obj=dual_values,
-            ub=[1.0] * len(dual_values),
-            lb=[0.0] * len(dual_values),
-            names=var_names
+        # dual_solution = [abs(val) if val == -0.0 else val for val in self.master_problem.solution.get_dual_values()]
+        dual_solution = self.master_problem.solution.get_dual_values()
+        rows_weights = dual_solution[:self.matrix.rows_count]
+        columns_weights = dual_solution[self.matrix.rows_count:]
+
+        for index, weight in enumerate(rows_weights):
+            problem.variables.add(
+                obj=[weight],
+                names=[f'x_{index}'],
+                types=['B']
+            )
+
+        problem.linear_constraints.add(
+            lin_expr=[[[f'x_{index}' for index in range(rows_weights)], [1.0] * len(rows_weights)]],
+            senses=['L'],
+            rhs=[1.0]
         )
 
-        for cell in self.cells:
-            rows_vars = [f'yr_{r}' for r in cell.get_rows_indices()]
-            problem.linear_constraints.add(
-                lin_expr=[[rows_vars, [1.0] * len(rows_vars)]],
-                senses=['L'],
-                rhs=[1.0],
-                names=[f'cell_{cell.index}_rows']
+        for index, weight in enumerate(columns_weights):
+            problem.variables.add(
+                obj=[weight],
+                names=[f'y_{index}'],
+                types=['B']
             )
-            cols_vars = [f'yc_{c}' for c in cell.get_columns_indices()]
-            problem.linear_constraints.add(
-                lin_expr=[[cols_vars, [1.0] * len(cols_vars)]],
-                senses=['L'],
-                rhs=[1.0],
-                names=[f'cell_{cell.index}_cols']
-            )
+
+        problem.linear_constraints.add(
+            lin_expr=[[[f'x_{index}' for index in range(columns_weights)], [1.0] * len(columns_weights)]],
+            senses=['L'],
+            rhs=[1.0]
+        )
+
+        # define z variables
+        for row_index in range(self.matrix.rows_count):
+            for col_index in range(self.matrix.columns_count):
+                z_variable = f'z_{row_index}_{col_index}'
+                matrix_value = self.matrix[row_index][col_index]
+                # define z variable
+                objective_value = -float((self.n1 + self.n0_in) * matrix_value + self.n1 * (1 - matrix_value))
+                problem.variables.add(
+                    obj=[objective_value],
+                    names=[z_variable],
+                    types=['B']
+                )
+
+                # linearize z = x * y
+                # z <= x
+                # z <= y
+                # x + y - z <= 1
+                problem.linear_constraints.add(
+                    lin_expr=[[[z_variable, f'x_{row_index}'], [1.0, 1.0]]],
+                    senses=['L'],
+                    rhs=[0.0]
+                )
+
+                problem.linear_constraints.add(
+                    lin_expr=[[[z_variable, f'y_{col_index}'], [1.0, 1.0]]],
+                    senses=['L'],
+                    rhs=[0.0]
+                )
+
+                problem.linear_constraints.add(
+                    lin_expr=[[[f'x_{row_index}', f'y_{col_index}', z_variable], [1.0, 1.0, -1.0]]],
+                    senses=['L'],
+                    rhs=[1.0]
+                )
+
 
         return problem
 
@@ -82,6 +124,7 @@ class CFP:
             self.var_mapping[var_name] = cell
             problem.variables.add(obj=[expression],
                                   names=[var_name]
+                                  # types=[problem.variables.type.continuous]
                                   )
 
         # n1_in * n1 constant
@@ -110,47 +153,97 @@ class CFP:
 
         return problem
 
+    def calculate_solution_efficacy(self):
+        solution_values = self.master_problem.solution.get_values()
+        solution_vars = self.master_problem.variables.get_names()
+        solution_mapping = list(filter(lambda x: x[1] == 1.0, zip(solution_vars, solution_values)))
+        cells = [self.var_mapping[sm[0]] for sm in solution_mapping]
+        return self.matrix.efficacy_fn(cells)
+
     def solve(self):
         # find violation cell
         self.dkb()
-        violation_cell = self.get_violation_cell()
-        for i in range(100):
-            if violation_cell and violation_cell not in self.cells:
-                break
+        violation_cell = None
+        for i in range(15):
             violation_cell = self.get_violation_cell()
+            if violation_cell:
+                break
         while violation_cell and violation_cell not in self.cells:
             self.cells.append(violation_cell)
             self.master_problem = self.construct_master_problem()
             self.master_problem.solve()
-            violation_cell = self.get_violation_cell()
+            for i in range(15):
+                violation_cell = self.get_violation_cell()
+                if violation_cell:
+                    break
 
-        # update slave problem objective
-        self.update_slave_problem()
-        self.solve()
+        efficacy = self.calculate_solution_efficacy()
+        if efficacy > self.efficacy:
+            self.efficacy = efficacy
+            master_solution = self.master_problem.solution.get_values()
+            bvar = max(list(filter(lambda x: not x[1].is_integer(), enumerate(master_solution))),
+                       key=lambda x: x[1], default=(None, None))[0]
+
+            if bvar is None:
+                # solve slave problem
+                test = self.construct_slave_problem()
+                return efficacy
+
+            self.current_branch += 1
+            branch_name = 'b_{}'.format(self.current_branch)
+            self.master_problem.linear_constraints.add(lin_expr=[[[bvar], [1.0]]],
+                                                       senses=['E'],
+                                                       rhs=[0.0],
+                                                       names=[branch_name])
+            branch_1 = self.solve()
+
+            self.master_problem.linear_constraints.delete(branch_name)
+
+            self.master_problem.linear_constraints.add(lin_expr=[[[bvar], [1.0]]],
+                                                       senses=['E'],
+                                                       rhs=[1.0],
+                                                       names=[branch_name])
+
+            branch_2 = self.solve()
+
+            return max(branch_1, branch_2)
+
+        test = self.construct_slave_problem()
+
+        return float('-Inf')
 
     def get_violation_cell(self):
         # эвристика для поиска самой нарушенной ячейки
         dual_solution = self.master_problem.solution.get_dual_values()
         rows_weights = dual_solution[:self.matrix.rows_count]
         columns_weights = dual_solution[self.matrix.rows_count:]
-        cells, efficacy = self.matrix.populate_cells(self.matrix.get_violation_metric(self.n1_in, self.n0_in, rows_weights, columns_weights), n_cells=2)
-        cells = sorted(cells, key=lambda c: c.priority)
-        if cells:
-            cell = cells[0]
-            if efficacy > 1.0 and cell.priority < 0:
-                return cell
+        cell, efficacy = self.matrix.populate_cells_for_violation(self.cells,
+            self.matrix.get_violation_metric(self.n1_in, self.n0_in, rows_weights, columns_weights), n_cells=2)
+
+        if efficacy > 1.0 and cell.priority < 0:
+            if cell in self.cells:
+                reorganized_cell = self.reorganize_cell(cell, rows_weights, columns_weights)
+                return reorganized_cell
+            return cell
         return None
 
-    def update_slave_problem(self):
-        dual_values = self.master_problem.solution.get_dual_values()
-        variables = self.get_var_names_for_slave_problem()
-        objective = list(zip(variables,
-                             [v if abs(v) != 0.0 else 0.000001 for v in dual_values]))
-        self.slave_problem.objective.set_linear(objective)
-        self.slave_problem.solve()
-        slave_problem_objective = self.slave_problem.solution.get_objective_value()
-        if slave_problem_objective > 0:
-            raise NotImplementedError
+    def reorganize_cell(self, cell, rows_weights, cols_weights):
+        calculate_violation = self.matrix.get_violation_metric(self.n1_in, self.n0_in, rows_weights, cols_weights)
+        pool = list()
+        pool.extend(cell.rows)
+        pool.extend(cell.columns)
+        # try to remove rows and columns and calculate violation
+        random.shuffle(pool)
+        while pool:
+            # take random rows/columns
+            element = pool.pop()
+            cell.remove(element)
+            violation = calculate_violation([cell])
+            if violation > 0 and cell not in self.cells:
+                break
+            else:
+                cell.add(element)
+        return cell
 
     def get_dual_solution_mapping(self):
         dual_solution = self.master_problem.solution.get_dual_values()
