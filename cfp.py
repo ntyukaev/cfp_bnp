@@ -5,6 +5,7 @@ from structures import Matrix
 from utils import read
 from more_itertools import powerset
 
+
 class CFP:
     def __init__(self, path):
         self.example = read(path)
@@ -47,11 +48,11 @@ class CFP:
                 types=['B']
             )
 
-        problem.linear_constraints.add(
-            lin_expr=[[[f'x_{index}' for index in range(rows_weights)], [1.0] * len(rows_weights)]],
-            senses=['L'],
-            rhs=[1.0]
-        )
+        # problem.linear_constraints.add(
+        #     lin_expr=[[[f'x_{index}' for index in range(len(rows_weights))], [1.0] * len(rows_weights)]],
+        #     senses=['G'],
+        #     rhs=[1.0]
+        # )
 
         for index, weight in enumerate(columns_weights):
             problem.variables.add(
@@ -60,11 +61,11 @@ class CFP:
                 types=['B']
             )
 
-        problem.linear_constraints.add(
-            lin_expr=[[[f'x_{index}' for index in range(columns_weights)], [1.0] * len(columns_weights)]],
-            senses=['L'],
-            rhs=[1.0]
-        )
+        # problem.linear_constraints.add(
+        #     lin_expr=[[[f'y_{index}' for index in range(len(columns_weights))], [1.0] * len(columns_weights)]],
+        #     senses=['G'],
+        #     rhs=[1.0]
+        # )
 
         # define z variables
         for row_index in range(self.matrix.rows_count):
@@ -72,7 +73,7 @@ class CFP:
                 z_variable = f'z_{row_index}_{col_index}'
                 matrix_value = self.matrix[row_index][col_index]
                 # define z variable
-                objective_value = -float((self.n1 + self.n0_in) * matrix_value + self.n1 * (1 - matrix_value))
+                objective_value = -float((self.n1 + self.n0_in) * matrix_value + self.n1_in * (1 - matrix_value))
                 problem.variables.add(
                     obj=[objective_value],
                     names=[z_variable],
@@ -84,13 +85,13 @@ class CFP:
                 # z <= y
                 # x + y - z <= 1
                 problem.linear_constraints.add(
-                    lin_expr=[[[z_variable, f'x_{row_index}'], [1.0, 1.0]]],
+                    lin_expr=[[[z_variable, f'x_{row_index}'], [1.0, -1.0]]],
                     senses=['L'],
                     rhs=[0.0]
                 )
 
                 problem.linear_constraints.add(
-                    lin_expr=[[[z_variable, f'y_{col_index}'], [1.0, 1.0]]],
+                    lin_expr=[[[z_variable, f'y_{col_index}'], [1.0, -1.0]]],
                     senses=['L'],
                     rhs=[0.0]
                 )
@@ -100,7 +101,6 @@ class CFP:
                     senses=['L'],
                     rhs=[1.0]
                 )
-
 
         return problem
 
@@ -164,6 +164,7 @@ class CFP:
         # find violation cell
         self.dkb()
         violation_cell = None
+        test = self.construct_slave_problem()
         for i in range(15):
             violation_cell = self.get_violation_cell()
             if violation_cell:
@@ -209,7 +210,6 @@ class CFP:
             return max(branch_1, branch_2)
 
         test = self.construct_slave_problem()
-
         return float('-Inf')
 
     def get_violation_cell(self):
@@ -276,6 +276,7 @@ def main():
     example = 'examples/1.txt'
     cfp = CFP(example)
     cfp.solve()
+    print(cfp.efficacy)
 
 
 if __name__ == '__main__':
