@@ -1,9 +1,8 @@
 import random
-
+import numpy as np
 from cplex import Cplex
-from structures import Matrix
+from structures import Matrix, Row, Column, Cell
 from utils import read
-from more_itertools import powerset
 
 
 class CFP:
@@ -36,36 +35,28 @@ class CFP:
 
         problem.objective.set_sense(problem.objective.sense.minimize)
 
-        # dual_solution = [abs(val) if val == -0.0 else val for val in self.master_problem.solution.get_dual_values()]
         dual_solution = self.master_problem.solution.get_dual_values()
         rows_weights = dual_solution[:self.matrix.rows_count]
         columns_weights = dual_solution[self.matrix.rows_count:]
 
+        total_vars = []
         for index, weight in enumerate(rows_weights):
+            var = f'x_{index}'
+            total_vars.append(var)
             problem.variables.add(
                 obj=[weight],
-                names=[f'x_{index}'],
+                names=[var],
                 types=['B']
             )
-
-        # problem.linear_constraints.add(
-        #     lin_expr=[[[f'x_{index}' for index in range(len(rows_weights))], [1.0] * len(rows_weights)]],
-        #     senses=['G'],
-        #     rhs=[1.0]
-        # )
 
         for index, weight in enumerate(columns_weights):
+            var = f'y_{index}'
+            total_vars.append(var)
             problem.variables.add(
                 obj=[weight],
-                names=[f'y_{index}'],
+                names=[var],
                 types=['B']
             )
-
-        # problem.linear_constraints.add(
-        #     lin_expr=[[[f'y_{index}' for index in range(len(columns_weights))], [1.0] * len(columns_weights)]],
-        #     senses=['G'],
-        #     rhs=[1.0]
-        # )
 
         # define z variables
         for row_index in range(self.matrix.rows_count):
@@ -165,6 +156,18 @@ class CFP:
         self.dkb()
         violation_cell = None
         test = self.construct_slave_problem()
+        rows = set([Row(index, row) for index, row in enumerate(self.matrix.matrix)])
+        columns = set([Column(index, col) for index, col in enumerate(np.transpose(self.matrix.matrix))])
+        cell = Cell()
+        for r in rows:
+            cell.add(r)
+        for c in columns:
+            cell.add(c)
+        self.cells.append(cell)
+        self.master_problem = self.construct_master_problem()
+        self.dkb()
+
+        test = self.construct_slave_problem()
         for i in range(15):
             violation_cell = self.get_violation_cell()
             if violation_cell:
@@ -173,6 +176,7 @@ class CFP:
             self.cells.append(violation_cell)
             self.master_problem = self.construct_master_problem()
             self.master_problem.solve()
+            # self.dkb()
             for i in range(15):
                 violation_cell = self.get_violation_cell()
                 if violation_cell:
