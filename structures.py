@@ -62,6 +62,23 @@ class Matrix:
     def create_column(self, index):
         return Column(index, self.transposed_matrix[index])
 
+    def create_cell(self, variables):
+        new_cell = Cell()
+        rows_vars = variables[:self.rows_count]
+        cols_vars = variables[self.rows_count:]
+
+        for idx, val in enumerate(rows_vars):
+            if val:
+                new_row = self.create_row(idx)
+                new_cell.add(new_row)
+
+        for idx, val in enumerate(cols_vars):
+            if val:
+                new_col = self.create_column(idx)
+                new_cell.add(new_col)
+        return new_cell
+
+
     def get_pool(self, rows, columns):
         pool = set()
         pool.update([row for row in rows if row.parent])

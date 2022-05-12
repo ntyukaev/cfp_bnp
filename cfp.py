@@ -93,7 +93,11 @@ class CFP:
                     rhs=[1.0]
                 )
 
-        return problem
+        problem.solve()
+        rows_cols_sln = problem.solution.get_values()[:len(dual_solution)]
+        new_cell = self.matrix.create_cell(rows_cols_sln)
+        if new_cell not in self.cells:
+            return new_cell
 
     def construct_master_problem(self):
         self.var_mapping = dict()
@@ -155,19 +159,7 @@ class CFP:
         # find violation cell
         self.dkb()
         violation_cell = None
-        test = self.construct_slave_problem()
-        rows = set([Row(index, row) for index, row in enumerate(self.matrix.matrix)])
-        columns = set([Column(index, col) for index, col in enumerate(np.transpose(self.matrix.matrix))])
-        cell = Cell()
-        for r in rows:
-            cell.add(r)
-        for c in columns:
-            cell.add(c)
-        self.cells.append(cell)
-        self.master_problem = self.construct_master_problem()
-        self.dkb()
 
-        test = self.construct_slave_problem()
         for i in range(15):
             violation_cell = self.get_violation_cell()
             if violation_cell:
@@ -213,7 +205,7 @@ class CFP:
 
             return max(branch_1, branch_2)
 
-        test = self.construct_slave_problem()
+        cell = self.construct_slave_problem()
         return float('-Inf')
 
     def get_violation_cell(self):
