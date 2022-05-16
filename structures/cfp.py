@@ -109,7 +109,7 @@ class CFP:
 
         # define x variables
         # a = n1 + n_0_in_l
-        # b = n_1_l
+        # b = n_1_in_l
         for cell in self.cells:
             n1_k, n0_k = cell.info()
             expression = (self.n1 + self.n0_in) * n1_k - self.n1_in * n0_k
@@ -161,9 +161,7 @@ class CFP:
             problem.variables.add(
                 obj=[weight],
                 names=[var],
-                types=['B'],
-                lb=[0.0],
-                ub=[1.0]
+                types=['B']
             )
 
         for index, weight in enumerate(columns_weights):
@@ -171,9 +169,7 @@ class CFP:
             problem.variables.add(
                 obj=[weight],
                 names=[var],
-                types=['B'],
-                lb=[0.0],
-                ub=[1.0]
+                types=['B']
             )
 
         # define z variables
@@ -182,13 +178,11 @@ class CFP:
                 z_variable = f'z_{row_index}_{col_index}'
                 matrix_value = self.matrix[row_index][col_index]
                 # define z variable
-                objective_value = -float((self.n1 + self.n0_in) * matrix_value + self.n1_in * (1 - matrix_value))
+                obj = -int((self.n1 + self.n0_in) * matrix_value - self.n1_in * (1 - matrix_value))
                 problem.variables.add(
-                    obj=[objective_value],
+                    obj=[obj],
                     names=[z_variable],
-                    types=['B'],
-                    lb=[0.0],
-                    ub=[1.0]
+                    types=['B']
                 )
 
                 # linearize z = x * y
@@ -315,8 +309,8 @@ class CFP:
     def find_violations(self):
         violation_cell = self.get_violation_cell()
         i = 0
-        while violation_cell and i < 15:
-            if violation_cell not in self.cells:
+        while violation_cell or i < 15:
+            if violation_cell and violation_cell not in self.cells:
                 self.cells.append(violation_cell)
                 self.construct_master_problem()
                 self.dkb()
@@ -334,7 +328,9 @@ class CFP:
             for col in cell.parts:
                 col_weight = parts_weights[col.index]
                 cell_weight += col_weight
-            d_k = (self.n1_in * cell_n1 + self.n0_in * cell_n0)
+            # a = n1 + n_0_in_l
+            # b = n_1_in_l
+            d_k = ((self.n1 + self.n0_in) * cell_n1 - self.n1_in * cell_n0)
             cell_weight_result = cell_weight - d_k
             cell.priority = cell_weight_result
             cell_weights.append(cell_weight_result)
@@ -377,11 +373,8 @@ class CFP:
                 # if the efficacy has improved then recreate a set of all elements and repeat
                 if new_violation_metric < violation_metric:
                     violation_metric = new_violation_metric
-                    if cell.priority < -15 and cell not in self.cells:
-                        # remember that cell if no other options are available
-                        return cell
-                    pool = self.get_pool(machines, parts)
-                    break
+                    broken_cell = sorted(cells, key=lambda x: x.priority)[0]
+                    return broken_cell
             # if the efficacy has not been increased, then remove the selected element from the pool
             else:
                 # return the element to its parent
@@ -391,6 +384,7 @@ class CFP:
         # remove the cells which don't have machines or parts
         # remove non-negative cells
         cells = [cell for cell in cells if cell.machines and cell.parts and cell.priority < 0]
+
         cells = sorted(cells, key=lambda x: x.priority)
         if cells:
             return cells[0]
