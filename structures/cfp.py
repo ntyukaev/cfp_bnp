@@ -47,6 +47,25 @@ class CFP:
             n0_in += n0_in_cell
         return n1_in / (self.n1 + n0_in)
 
+    # def create_initial_cells(self):
+    #     cells = [Cell() for _ in range(min(self.matrix.rows_count, self.matrix.columns_count))]
+    #     machines = [self.get_machine(index) for index in range(self.matrix.rows_count)]
+    #     parts = [self.get_part(index) for index in range(self.matrix.columns_count)]
+    #
+    #     # 1
+    #     cells[0].add(machines[0])
+    #     cells[0].add(parts[0])
+    #
+    #     # 2
+    #     cells[1].add(machines[1])
+    #     cells[1].add(parts[2])
+    #
+    #     # 3
+    #     cells[2].add(machines[2])
+    #     cells[2].add(parts[1])
+    #
+    #     return cells
+
     def create_initial_cells(self):
         # generate the maximum number of possible cells
         cells = [Cell() for _ in range(min(self.matrix.rows_count, self.matrix.columns_count))]
@@ -271,6 +290,7 @@ class CFP:
                 slave_cell = self.get_cell_from_slave_problem()
                 if slave_cell:
                     self.cells.append(slave_cell)
+                    self.construct_master_problem()
                     return self.solve()
                 return grouping_efficacy
 
@@ -296,6 +316,7 @@ class CFP:
         slave_cell = self.get_cell_from_slave_problem()
         if slave_cell:
             self.cells.append(slave_cell)
+            self.construct_master_problem()
             return self.solve()
         return float('-Inf')
 

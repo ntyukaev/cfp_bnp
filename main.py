@@ -1,10 +1,13 @@
+import sys
 import time
 from structures.matrix import Matrix
 from structures.cfp import CFP
 
+sys.setrecursionlimit(10000)
+
 
 def main():
-    matrix = Matrix('examples/1.txt')
+    matrix = Matrix('examples/8.txt')
     cfp = CFP(matrix)
     start = time.time()
     cfp.solve()
