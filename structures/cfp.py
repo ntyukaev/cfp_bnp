@@ -8,6 +8,7 @@ from .cell import Cell
 class CFP:
     def __init__(self, matrix):
         self.matrix = matrix
+        self.depth = min(self.matrix.rows_count, self.matrix.columns_count) * 100
         self.transposed_matrix = self.matrix.transposed
         self.n1 = self.matrix.n1
         self.n0 = self.matrix.n0
@@ -46,25 +47,6 @@ class CFP:
             n1_in += n1_in_cell
             n0_in += n0_in_cell
         return n1_in / (self.n1 + n0_in)
-
-    # def create_initial_cells(self):
-    #     cells = [Cell() for _ in range(min(self.matrix.rows_count, self.matrix.columns_count))]
-    #     machines = [self.get_machine(index) for index in range(self.matrix.rows_count)]
-    #     parts = [self.get_part(index) for index in range(self.matrix.columns_count)]
-    #
-    #     # 1
-    #     cells[0].add(machines[0])
-    #     cells[0].add(parts[0])
-    #
-    #     # 2
-    #     cells[1].add(machines[1])
-    #     cells[1].add(parts[2])
-    #
-    #     # 3
-    #     cells[2].add(machines[2])
-    #     cells[2].add(parts[1])
-    #
-    #     return cells
 
     def create_initial_cells(self):
         # generate the maximum number of possible cells
@@ -242,7 +224,7 @@ class CFP:
         for idx, value in enumerate(parts):
             if value:
                 cell.add(self.get_part(idx))
-        if cell not in self.cells:
+        if cell not in self.cells and self.slave_problem.solution.get_objective_value() <= 0:
             return cell
         else:
             return
@@ -274,6 +256,7 @@ class CFP:
             self.dkb()
 
     def solve(self):
+        self.depth -= 1
         self.dkb()
         self.find_violations()
 
@@ -314,7 +297,7 @@ class CFP:
             return max(branch_1, branch_2)
 
         slave_cell = self.get_cell_from_slave_problem()
-        if slave_cell:
+        if slave_cell and self.depth <= 0:
             self.cells.append(slave_cell)
             self.construct_master_problem()
             return self.solve()
@@ -330,7 +313,7 @@ class CFP:
     def find_violations(self):
         violation_cell = self.get_violation_cell()
         i = 0
-        while violation_cell or i < 15:
+        while violation_cell or i < 5:
             if violation_cell and violation_cell not in self.cells:
                 self.cells.append(violation_cell)
                 self.construct_master_problem()

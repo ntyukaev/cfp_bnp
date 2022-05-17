@@ -7,7 +7,7 @@ sys.setrecursionlimit(10000)
 
 
 def main():
-    matrix = Matrix('examples/8.txt')
+    matrix = Matrix('examples/13.txt')
     cfp = CFP(matrix)
     start = time.time()
     cfp.solve()
