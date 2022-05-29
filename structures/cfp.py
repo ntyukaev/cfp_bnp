@@ -3,12 +3,12 @@ from cplex import Cplex
 from .machine import Machine
 from .part import Part
 from .cell import Cell
+from cplex.exceptions.errors import CplexSolverError
 
 
 class CFP:
     def __init__(self, matrix):
         self.matrix = matrix
-        self.depth = min(self.matrix.rows_count, self.matrix.columns_count) * 100
         self.transposed_matrix = self.matrix.transposed
         self.n1 = self.matrix.n1
         self.n0 = self.matrix.n0
@@ -18,11 +18,14 @@ class CFP:
         self.machines_count = self.matrix.rows_count
         self.parts_count = self.matrix.columns_count
         self.grouping_efficacy = 0
+        self.current_objective_value = float('-Inf')
+        self.best_objective_value = float('-Inf')
+        self.branches = dict()
+        self.branching_history = list()
         self.cells = self.create_initial_cells()
         self.cell_mapping = dict()
         self.master_problem = None
         self.slave_problem = None
-        self.construct_master_problem()
 
     def get_machine(self, index):
         return Machine(index, self.matrix[index])
@@ -142,6 +145,13 @@ class CFP:
                                            rhs=[1.0],
                                            names=[f'part_{i}'])
 
+        # define branching constraints
+        for branch_name, rhs in self.branches.items():
+            problem.linear_constraints.add(lin_expr=[[[branch_name], [1.0]]],
+                                           senses=['E'],
+                                           rhs=[rhs],
+                                           names=[branch_name])
+
         problem.solve()
         self.master_problem = problem
 
@@ -237,7 +247,10 @@ class CFP:
         return self.calculate_grouping_efficacy(cells)
 
     def dkb(self):
-        objective_value = self.master_problem.solution.get_objective_value()
+        self.best_objective_value = float('-Inf')
+        self.construct_master_problem()
+        objective_value = self._iterate()
+        self.master_problem.solve()
         if objective_value > 0:
             n1_inl = 0
             n0_inl = 0
@@ -252,56 +265,67 @@ class CFP:
                     n0_inl += n0
             self.n1_in = n1_inl
             self.n0_in = n0_inl
-            self.construct_master_problem()
             self.dkb()
 
     def solve(self):
-        self.depth -= 1
         self.dkb()
+        self.grouping_efficacy = self.calculate_solution_efficacy()
+
+    def get_branching_variable(self):
+        master_solution = self.master_problem.solution.get_values()
+        var_names = self.master_problem.variables.get_names()
+        bvar_ind = max(list(filter(lambda x: not x[1].is_integer(), enumerate(master_solution))),
+                   key=lambda x: x[1], default=(None, None))[0]
+        if bvar_ind is not None:
+            return var_names[bvar_ind]
+
+    def delete_branch(self, branch_name):
+        self.master_problem.linear_constraints.delete(branch_name)
+        del self.branches[branch_name]
+
+    def _iterate(self):
+        self.master_problem.solve()
         self.find_violations()
 
-        grouping_efficacy = self.calculate_solution_efficacy()
+        objective_value = self.master_problem.solution.get_objective_value()
 
-        if grouping_efficacy > self.grouping_efficacy:
-            self.grouping_efficacy = grouping_efficacy
-            master_solution = self.master_problem.solution.get_values()
-            bvar = max(list(filter(lambda x: not x[1].is_integer(), enumerate(master_solution))),
-                       key=lambda x: x[1], default=(None, None))[0]
+        bvar = self.get_branching_variable()
+        if bvar is None:
+            # solve slave problem
+            slave_cell = self.get_cell_from_slave_problem()
+            if slave_cell:
+                self.cells.append(slave_cell)
+                self.construct_master_problem()
+                return self._iterate()
+            if objective_value > self.best_objective_value:
+                self.best_objective_value = objective_value
+            return objective_value
 
-            if bvar is None:
-                # solve slave problem
-                slave_cell = self.get_cell_from_slave_problem()
-                if slave_cell:
-                    self.cells.append(slave_cell)
-                    self.construct_master_problem()
-                    return self.solve()
-                return grouping_efficacy
+        self.current_branch += 1
+        branch_name = bvar
+        rhs = 0.0
+        self.branches[branch_name] = rhs
+        self.branching_history.append((branch_name, rhs))
+        self.master_problem.linear_constraints.add(lin_expr=[[[bvar], [1.0]]],
+                                                   senses=['E'],
+                                                   rhs=[rhs],
+                                                   names=[branch_name])
+        branch_1 = self._iterate()
+        self.delete_branch(branch_name)
 
-            self.current_branch += 1
-            branch_name = 'b_{}'.format(self.current_branch)
-            self.master_problem.linear_constraints.add(lin_expr=[[[bvar], [1.0]]],
-                                                       senses=['E'],
-                                                       rhs=[0.0],
-                                                       names=[branch_name])
-            branch_1 = self.solve()
+        # ** #
+        rhs = 1.0
+        self.branches[branch_name] = rhs
+        self.branching_history.append((branch_name, rhs))
+        self.master_problem.linear_constraints.add(lin_expr=[[[bvar], [1.0]]],
+                                                   senses=['E'],
+                                                   rhs=[rhs],
+                                                   names=[branch_name])
 
-            self.master_problem.linear_constraints.delete(branch_name)
+        branch_2 = self._iterate()
+        self.delete_branch(branch_name)
 
-            self.master_problem.linear_constraints.add(lin_expr=[[[bvar], [1.0]]],
-                                                       senses=['E'],
-                                                       rhs=[1.0],
-                                                       names=[branch_name])
-
-            branch_2 = self.solve()
-
-            return max(branch_1, branch_2)
-
-        slave_cell = self.get_cell_from_slave_problem()
-        if slave_cell and self.depth <= 0:
-            self.cells.append(slave_cell)
-            self.construct_master_problem()
-            return self.solve()
-        return float('-Inf')
+        return max(branch_1, branch_2)
 
     def calculate_solution_efficacy(self):
         solution_values = self.master_problem.solution.get_values()
@@ -312,14 +336,10 @@ class CFP:
 
     def find_violations(self):
         violation_cell = self.get_violation_cell()
-        i = 0
-        while violation_cell or i < 5:
+        while violation_cell:
             if violation_cell and violation_cell not in self.cells:
                 self.cells.append(violation_cell)
-                self.construct_master_problem()
-                self.dkb()
             violation_cell = self.get_violation_cell()
-            i += 1
 
     def calculate_violation_metric(self, cells, machine_weights, parts_weights):
         cell_weights = list()
@@ -342,7 +362,10 @@ class CFP:
         return min_weight if min_weight < 0 else 0
 
     def get_violation_cell(self):
-        dual_solution = self.master_problem.solution.get_dual_values()
+        try:
+            dual_solution = self.master_problem.solution.get_dual_values()
+        except CplexSolverError:
+            return
         machines_weights = dual_solution[:self.matrix.rows_count]
         parts_weights = dual_solution[self.matrix.rows_count:]
 
