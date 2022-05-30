@@ -18,6 +18,8 @@ class CFP:
         self.machines_count = self.matrix.rows_count
         self.parts_count = self.matrix.columns_count
         self.grouping_efficacy = 0
+        self.best_solution_names = list()
+        self.best_solution_values = list()
         self.forbidden_sets = set()
         self.current_objective_value = float('-Inf')
         self.best_objective_value = float('-Inf')
@@ -148,8 +150,11 @@ class CFP:
 
         # define branching constraints
         for branch_name, rhs in self.branches.items():
+            sense = 'G'
+            if rhs == 0.0:
+                sense = 'L'
             problem.linear_constraints.add(lin_expr=[[[branch_name], [1.0]]],
-                                           senses=['E'],
+                                           senses=[sense],
                                            rhs=[rhs],
                                            names=[branch_name])
 
@@ -300,6 +305,14 @@ class CFP:
                 names=[f'{G_k}_6']
             )
 
+            # l_k + g_k + G_k >= 1
+            problem.linear_constraints.add(
+                lin_expr=[[[l_k, g_k, G_k], [1.0, 1.0, 1.0]]],
+                senses=['G'],
+                rhs=[1.0],
+                names=[f'{G_k}_7']
+            )
+
         problem.solve()
         self.slave_problem = problem
 
@@ -331,13 +344,13 @@ class CFP:
     def dkb(self):
         self.best_objective_value = float('-Inf')
         self.construct_master_problem()
-        objective_value = self._iterate()
-        self.master_problem.solve()
-        if objective_value > 0:
+        self._iterate()
+        # self.master_problem.solve()
+        if self.best_objective_value > 0:
             n1_inl = 0
             n0_inl = 0
-            solution_values = self.master_problem.solution.get_values()
-            solution_names = self.master_problem.variables.get_names()
+            solution_values = self.best_solution_values
+            solution_names = self.best_solution_names
             solution_dict = dict(zip(solution_names, solution_values))
             for var_name, var_val in solution_dict.items():
                 if var_val:
@@ -381,6 +394,8 @@ class CFP:
                 return self._iterate()
             if objective_value > self.best_objective_value:
                 self.best_objective_value = objective_value
+                self.best_solution_names = self.master_problem.variables.get_names()
+                self.best_solution_values = self.master_problem.solution.get_values()
             return objective_value
 
         self.current_branch += 1
@@ -390,7 +405,7 @@ class CFP:
         self.branches[branch_name] = rhs
         self.branching_history.append((branch_name, rhs))
         self.master_problem.linear_constraints.add(lin_expr=[[[bvar], [1.0]]],
-                                                   senses=['E'],
+                                                   senses=['L'],
                                                    rhs=[rhs],
                                                    names=[branch_name])
         branch_1 = self._iterate()
@@ -402,7 +417,7 @@ class CFP:
         self.branches[branch_name] = rhs
         self.branching_history.append((branch_name, rhs))
         self.master_problem.linear_constraints.add(lin_expr=[[[bvar], [1.0]]],
-                                                   senses=['E'],
+                                                   senses=['G'],
                                                    rhs=[rhs],
                                                    names=[branch_name])
 
@@ -412,8 +427,8 @@ class CFP:
         return max(branch_1, branch_2)
 
     def calculate_solution_efficacy(self):
-        solution_values = self.master_problem.solution.get_values()
-        solution_vars = self.master_problem.variables.get_names()
+        solution_values = self.best_solution_values
+        solution_vars = self.best_solution_names
         solution_mapping = list(filter(lambda x: x[1] == 1.0, zip(solution_vars, solution_values)))
         cells = [self.cell_mapping[sm[0]] for sm in solution_mapping]
         return self.calculate_grouping_efficacy(cells)
