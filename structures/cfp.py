@@ -18,6 +18,7 @@ class CFP:
         self.machines_count = self.matrix.rows_count
         self.parts_count = self.matrix.columns_count
         self.grouping_efficacy = 0
+        self.forbidden_sets = set()
         self.current_objective_value = float('-Inf')
         self.best_objective_value = float('-Inf')
         self.branches = dict()
@@ -218,6 +219,87 @@ class CFP:
                     rhs=[1.0]
                 )
 
+        # forbidden sets
+        for s in self.forbidden_sets:
+            fs_cell = self.cell_mapping[s]
+            machines_count = fs_cell.machines_count()
+            parts_count = fs_cell.parts_count()
+            S = machines_count + parts_count
+            M = self.matrix.rows_count + self.matrix.columns_count + 1
+            l_k = f'l_{fs_cell.index}'
+            problem.variables.add(
+                names=[l_k],
+                types=['B']
+            )
+
+            sum_i = [f'x_{i}' for i in fs_cell.get_machine_indices()]
+            sum_j = [f'y_{j}' for j in fs_cell.get_part_indices()]
+
+            # - sum_i - sum_j -M * l_k <= -S
+            problem.linear_constraints.add(
+                lin_expr=[[[*sum_i, *sum_j, l_k], [*[-1.0] * len(sum_i), *[-1.0] * len(sum_j), -M]]],
+                senses=['L'],
+                rhs=[-S],
+                names=[f'{l_k}_1']
+            )
+
+            # sum_i + sum_j + M* l_k <= M + S - 1
+            problem.linear_constraints.add(
+                lin_expr=[[[*sum_i, *sum_j, l_k], [*[1.0] * len(sum_i), *[1.0] * len(sum_j), M]]],
+                senses=['L'],
+                rhs=[M + S - 1],
+                names=[f'{l_k}_2']
+            )
+
+            # g_k
+            g_k = f'g_{fs_cell.index}'
+            problem.variables.add(
+                names=[g_k],
+                types=['B']
+            )
+
+            # sum_i - sum_j - M * g_k <= S
+            problem.linear_constraints.add(
+                lin_expr=[[[*sum_i, *sum_j, g_k], [*[1.0] * len(sum_i), *[-1.0] * len(sum_j), -M]]],
+                senses=['L'],
+                rhs=[S],
+                names=[f'{g_k}_3']
+            )
+
+            # - sum_i - sum_j + M * g_k <= M - S - 1
+            problem.linear_constraints.add(
+                lin_expr=[[[*sum_i, *sum_j, g_k], [*[-1.0] * len(sum_i), *[-1.0] * len(sum_j), M]]],
+                senses=['L'],
+                rhs=[M - S - 1],
+                names=[f'{g_k}_4']
+            )
+
+            # G_k
+            G_k = f'G_{fs_cell.index}'
+            problem.variables.add(
+                names=[G_k],
+                types=['B']
+            )
+
+            sum_i_all = [f'x_{i}' for i in range(self.matrix.rows_count)]
+            sum_j_all = [f'y_{j}' for j in range(self.matrix.columns_count)]
+
+            # sum_i_all - sum_j_all - M * G_k <= S
+            problem.linear_constraints.add(
+                lin_expr=[[[*sum_i_all, *sum_j_all, G_k], [*[1.0] * len(sum_i_all), *[-1.0] * len(sum_j_all), -M]]],
+                senses=['L'],
+                rhs=[S],
+                names=[f'{G_k}_5']
+            )
+
+            # - sum_i_all - sum_j_all + M * G_k <= M - S - 1
+            problem.linear_constraints.add(
+                lin_expr=[[[*sum_i_all, *sum_j_all, G_k], [*[-1.0] * len(sum_i_all), *[-1.0] * len(sum_j_all), M]]],
+                senses=['L'],
+                rhs=[M - S - 1],
+                names=[f'{G_k}_6']
+            )
+
         problem.solve()
         self.slave_problem = problem
 
@@ -304,6 +386,7 @@ class CFP:
         self.current_branch += 1
         branch_name = bvar
         rhs = 0.0
+        self.forbidden_sets.add(branch_name)
         self.branches[branch_name] = rhs
         self.branching_history.append((branch_name, rhs))
         self.master_problem.linear_constraints.add(lin_expr=[[[bvar], [1.0]]],
@@ -312,6 +395,7 @@ class CFP:
                                                    names=[branch_name])
         branch_1 = self._iterate()
         self.delete_branch(branch_name)
+        self.forbidden_sets.remove(branch_name)
 
         # ** #
         rhs = 1.0

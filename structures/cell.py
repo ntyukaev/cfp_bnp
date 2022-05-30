@@ -18,6 +18,12 @@ class Cell:
         return sorted(self.get_machine_indices()) == sorted(other.get_machine_indices()) and \
                sorted(self.get_part_indices()) == sorted(other.get_part_indices())
 
+    def machines_count(self):
+        return len(self.machines)
+
+    def parts_count(self):
+        return len(self.parts)
+
     def get_machine_indices(self):
         return sorted([row.index for row in self.machines])
 
